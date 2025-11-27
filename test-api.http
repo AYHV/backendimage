@@ -1,0 +1,286 @@
+### Variables
+@baseUrl = http://localhost:5000/api/v1
+@token = your-jwt-token-here
+
+### ============ AUTH ROUTES ============
+
+### Register User
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+
+{
+  "name": "John Doe",
+  "email": "john@example.com",
+  "password": "Password123!",
+  "phone": "+1234567890"
+}
+
+### Login
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "email": "john@example.com",
+  "password": "Password123!"
+}
+
+### Get Current User
+GET {{baseUrl}}/auth/me
+Authorization: Bearer {{token}}
+
+### Update Profile
+PUT {{baseUrl}}/auth/profile
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "John Updated",
+  "phone": "+1234567890"
+}
+
+### Change Password
+PUT {{baseUrl}}/auth/password
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "currentPassword": "Password123!",
+  "newPassword": "NewPassword123!"
+}
+
+### Refresh Token
+POST {{baseUrl}}/auth/refresh
+Content-Type: application/json
+
+{
+  "refreshToken": "your-refresh-token"
+}
+
+### Logout
+POST {{baseUrl}}/auth/logout
+Authorization: Bearer {{token}}
+
+### ============ PORTFOLIO ROUTES ============
+
+### Get All Portfolio Items
+GET {{baseUrl}}/portfolio
+
+### Get Portfolio Item by ID
+GET {{baseUrl}}/portfolio/64abc123def456789
+Authorization: Bearer {{token}}
+
+### Create Portfolio Item (Admin only)
+POST {{baseUrl}}/portfolio
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "title": "Wedding Photography",
+  "description": "Beautiful wedding moments",
+  "category": "wedding",
+  "images": ["https://example.com/image1.jpg"],
+  "featured": true
+}
+
+### Update Portfolio Item (Admin only)
+PUT {{baseUrl}}/portfolio/64abc123def456789
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "title": "Updated Title",
+  "featured": false
+}
+
+### Delete Portfolio Item (Admin only)
+DELETE {{baseUrl}}/portfolio/64abc123def456789
+Authorization: Bearer {{token}}
+
+### ============ PACKAGE ROUTES ============
+
+### Get All Packages
+GET {{baseUrl}}/packages
+
+### Get Package by ID
+GET {{baseUrl}}/packages/64abc123def456789
+
+### Create Package (Admin only)
+POST {{baseUrl}}/packages
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "Premium Wedding Package",
+  "description": "Full day coverage with 2 photographers",
+  "price": 2500,
+  "duration": 8,
+  "features": ["Full day coverage", "2 photographers", "500+ edited photos"],
+  "category": "wedding",
+  "isActive": true
+}
+
+### Update Package (Admin only)
+PUT {{baseUrl}}/packages/64abc123def456789
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "price": 2800,
+  "features": ["Full day coverage", "2 photographers", "600+ edited photos"]
+}
+
+### Delete Package (Admin only)
+DELETE {{baseUrl}}/packages/64abc123def456789
+Authorization: Bearer {{token}}
+
+### ============ BOOKING ROUTES ============
+
+### Get My Bookings
+GET {{baseUrl}}/bookings/my-bookings
+Authorization: Bearer {{token}}
+
+### Get All Bookings (Admin only)
+GET {{baseUrl}}/bookings
+Authorization: Bearer {{token}}
+
+### Get Booking by ID
+GET {{baseUrl}}/bookings/64abc123def456789
+Authorization: Bearer {{token}}
+
+### Create Booking
+POST {{baseUrl}}/bookings
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "package": "64abc123def456789",
+  "eventDate": "2025-12-15T10:00:00Z",
+  "eventLocation": "Grand Hotel, New York",
+  "eventType": "wedding",
+  "guestCount": 150,
+  "specialRequests": "Need drone photography"
+}
+
+### Update Booking
+PUT {{baseUrl}}/bookings/64abc123def456789
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "eventLocation": "Updated Location",
+  "guestCount": 200
+}
+
+### Update Booking Status (Admin only)
+PATCH {{baseUrl}}/bookings/64abc123def456789/status
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "status": "confirmed"
+}
+
+### Cancel Booking
+DELETE {{baseUrl}}/bookings/64abc123def456789
+Authorization: Bearer {{token}}
+
+### ============ PAYMENT ROUTES ============
+
+### Create Payment Intent
+POST {{baseUrl}}/payments/create-intent
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "bookingId": "64abc123def456789",
+  "amount": 2500
+}
+
+### Get Payment by Booking ID
+GET {{baseUrl}}/payments/booking/64abc123def456789
+Authorization: Bearer {{token}}
+
+### Get All Payments (Admin only)
+GET {{baseUrl}}/payments
+Authorization: Bearer {{token}}
+
+### Refund Payment (Admin only)
+POST {{baseUrl}}/payments/64abc123def456789/refund
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "reason": "Customer requested cancellation"
+}
+
+### ============ DELIVERY ROUTES ============
+
+### Get Deliveries for Booking
+GET {{baseUrl}}/deliveries/booking/64abc123def456789
+Authorization: Bearer {{token}}
+
+### Get All Deliveries (Admin only)
+GET {{baseUrl}}/deliveries
+Authorization: Bearer {{token}}
+
+### Create Delivery (Admin only)
+POST {{baseUrl}}/deliveries
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "booking": "64abc123def456789",
+  "files": [
+    {
+      "url": "https://cloudinary.com/image1.jpg",
+      "type": "image",
+      "size": 2048576,
+      "name": "photo_001.jpg"
+    }
+  ],
+  "notes": "Final edited photos"
+}
+
+### Update Delivery Status (Admin only)
+PATCH {{baseUrl}}/deliveries/64abc123def456789/status
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "status": "delivered"
+}
+
+### ============ ADMIN ROUTES ============
+
+### Get Dashboard Stats
+GET {{baseUrl}}/admin/stats
+Authorization: Bearer {{token}}
+
+### Get All Users
+GET {{baseUrl}}/admin/users
+Authorization: Bearer {{token}}
+
+### Get User by ID
+GET {{baseUrl}}/admin/users/64abc123def456789
+Authorization: Bearer {{token}}
+
+### Update User Role
+PATCH {{baseUrl}}/admin/users/64abc123def456789/role
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "role": "admin"
+}
+
+### Delete User
+DELETE {{baseUrl}}/admin/users/64abc123def456789
+Authorization: Bearer {{token}}
+
+### Get Revenue Report
+GET {{baseUrl}}/admin/reports/revenue?startDate=2025-01-01&endDate=2025-12-31
+Authorization: Bearer {{token}}
+
+### Get Booking Report
+GET {{baseUrl}}/admin/reports/bookings?startDate=2025-01-01&endDate=2025-12-31
+Authorization: Bearer {{token}}
