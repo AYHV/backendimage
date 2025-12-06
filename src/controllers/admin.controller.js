@@ -3,7 +3,9 @@ const Payment = require('../models/Payment');
 const User = require('../models/User');
 const Portfolio = require('../models/Portfolio');
 const Package = require('../models/Package');
-const { catchAsync } = require('../utils/errorHandler');
+const { catchAsync, AppError } = require('../utils/errorHandler');
+const { Op } = require('sequelize');
+const sequelize = require('../config/database');
 
 /**
  * @desc    Get admin dashboard statistics
@@ -12,115 +14,98 @@ const { catchAsync } = require('../utils/errorHandler');
  */
 const getDashboardStats = catchAsync(async (req, res, next) => {
     // Total bookings
-    const totalBookings = await Booking.countDocuments();
+    const totalBookings = await Booking.count();
 
     // Bookings by status
-    const bookingsByStatus = await Booking.aggregate([
-        {
-            $group: {
-                _id: '$bookingStatus',
-                count: { $sum: 1 },
-            },
-        },
-    ]);
+    const bookingsByStatus = await Booking.findAll({
+        attributes: [
+            'bookingStatus',
+            [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+        ],
+        group: ['bookingStatus'],
+        raw: true
+    });
 
     // Total revenue
-    const revenueData = await Payment.aggregate([
-        {
-            $match: { status: 'Succeeded' },
-        },
-        {
-            $group: {
-                _id: null,
-                totalRevenue: { $sum: '$amount' },
-                totalDeposits: {
-                    $sum: {
-                        $cond: [{ $eq: ['$paymentType', 'Deposit'] }, '$amount', 0],
-                    },
-                },
-                totalPayments: { $sum: 1 },
-            },
-        },
-    ]);
+    const revenueStats = await Payment.findAll({
+        attributes: [
+            [sequelize.fn('SUM', sequelize.col('amount')), 'totalRevenue'],
+            [sequelize.fn('COUNT', sequelize.col('id')), 'totalPayments'],
+        ],
+        where: { status: 'Succeeded' },
+        raw: true
+    });
 
-    const revenue = revenueData[0] || {
-        totalRevenue: 0,
-        totalDeposits: 0,
-        totalPayments: 0,
+    // Calculate deposits separately because conditional aggregation is complex in Sequelize
+    const depositStats = await Payment.sum('amount', {
+        where: {
+            status: 'Succeeded',
+            paymentType: 'Deposit'
+        }
+    });
+
+    const revenue = {
+        totalRevenue: revenueStats[0]?.totalRevenue || 0,
+        totalDeposits: depositStats || 0,
+        totalPayments: revenueStats[0]?.totalPayments || 0,
     };
 
     // Pending payments
-    const pendingPayments = await Booking.countDocuments({
-        paymentStatus: { $in: ['Pending', 'DepositPaid'] },
+    const pendingPayments = await Booking.count({
+        where: {
+            paymentStatus: { [Op.in]: ['Pending', 'DepositPaid'] },
+        }
     });
 
     // Upcoming bookings
-    const upcomingBookings = await Booking.countDocuments({
-        bookingDate: { $gte: new Date() },
-        bookingStatus: { $in: ['Confirmed', 'Pending'] },
+    const upcomingBookings = await Booking.count({
+        where: {
+            bookingDate: { [Op.gte]: new Date() },
+            bookingStatus: { [Op.in]: ['Confirmed', 'Pending'] },
+        }
     });
 
     // Total clients
-    const totalClients = await User.countDocuments({ role: 'client' });
+    const totalClients = await User.count({ where: { role: 'client' } });
 
     // Recent bookings
-    const recentBookings = await Booking.find()
-        .populate('user', 'name email')
-        .populate('package', 'name category')
-        .sort('-createdAt')
-        .limit(10);
+    const recentBookings = await Booking.findAll({
+        include: [
+            { model: User, as: 'user', attributes: ['name', 'email'] },
+            { model: Package, as: 'package', attributes: ['name', 'category'] }
+        ],
+        order: [['createdAt', 'DESC']],
+        limit: 10
+    });
 
     // Monthly revenue (last 12 months)
-    const monthlyRevenue = await Payment.aggregate([
-        {
-            $match: {
-                status: 'Succeeded',
-                createdAt: {
-                    $gte: new Date(new Date().setMonth(new Date().getMonth() - 12)),
-                },
-            },
-        },
-        {
-            $group: {
-                _id: {
-                    year: { $year: '$createdAt' },
-                    month: { $month: '$createdAt' },
-                },
-                revenue: { $sum: '$amount' },
-                count: { $sum: 1 },
-            },
-        },
-        {
-            $sort: { '_id.year': 1, '_id.month': 1 },
-        },
-    ]);
+    // Using raw query for date manipulation compatibility across DBs
+    const monthlyRevenue = await sequelize.query(`
+        SELECT 
+            YEAR(created_at) as year,
+            MONTH(created_at) as month,
+            SUM(amount) as revenue,
+            COUNT(*) as count
+        FROM payments
+        WHERE status = 'Succeeded' 
+        AND created_at >= DATE_SUB(NOW(), INTERVAL 12 MONTH)
+        GROUP BY YEAR(created_at), MONTH(created_at)
+        ORDER BY year ASC, month ASC
+    `, { type: sequelize.QueryTypes.SELECT });
 
     // Popular packages
-    const popularPackages = await Booking.aggregate([
-        {
-            $group: {
-                _id: '$package',
-                bookingCount: { $sum: 1 },
-            },
-        },
-        {
-            $sort: { bookingCount: -1 },
-        },
-        {
-            $limit: 5,
-        },
-        {
-            $lookup: {
-                from: 'packages',
-                localField: '_id',
-                foreignField: '_id',
-                as: 'packageDetails',
-            },
-        },
-        {
-            $unwind: '$packageDetails',
-        },
-    ]);
+    const popularPackages = await Booking.findAll({
+        attributes: [
+            'packageId',
+            [sequelize.fn('COUNT', sequelize.col('Booking.id')), 'bookingCount']
+        ],
+        include: [
+            { model: Package, as: 'package', attributes: ['name', 'category', 'price'] }
+        ],
+        group: ['packageId', 'package.id', 'package.name', 'package.category', 'package.price'],
+        order: [[sequelize.literal('bookingCount'), 'DESC']],
+        limit: 5
+    });
 
     res.status(200).json({
         success: true,
@@ -150,47 +135,39 @@ const getAllClients = catchAsync(async (req, res, next) => {
     const { page = 1, limit = 20, search } = req.query;
 
     // Build query
-    const query = { role: 'client' };
+    const where = { role: 'client' };
     if (search) {
-        query.$or = [
-            { name: { $regex: search, $options: 'i' } },
-            { email: { $regex: search, $options: 'i' } },
+        where[Op.or] = [
+            { name: { [Op.like]: `%${search}%` } },
+            { email: { [Op.like]: `%${search}%` } },
         ];
     }
 
     // Execute query with pagination
-    const skip = (page - 1) * limit;
-    const clients = await User.find(query)
-        .select('-password -refreshToken')
-        .sort('-createdAt')
-        .skip(skip)
-        .limit(parseInt(limit));
+    const offset = (page - 1) * limit;
+    const { count: total, rows: clients } = await User.findAndCountAll({
+        where,
+        attributes: { exclude: ['password', 'refreshToken'] },
+        order: [['createdAt', 'DESC']],
+        offset,
+        limit: parseInt(limit),
+    });
 
-    const total = await User.countDocuments(query);
-
-    // Get booking count for each client
+    // Get booking count and total spent for each client
     const clientsWithStats = await Promise.all(
         clients.map(async (client) => {
-            const bookingCount = await Booking.countDocuments({ user: client._id });
-            const totalSpent = await Payment.aggregate([
-                {
-                    $match: {
-                        user: client._id,
-                        status: 'Succeeded',
-                    },
-                },
-                {
-                    $group: {
-                        _id: null,
-                        total: { $sum: '$amount' },
-                    },
-                },
-            ]);
+            const bookingCount = await Booking.count({ where: { userId: client.id } });
+            const totalSpent = await Payment.sum('amount', {
+                where: {
+                    userId: client.id,
+                    status: 'Succeeded',
+                }
+            });
 
             return {
-                ...client.toObject(),
+                ...client.toJSON(),
                 bookingCount,
-                totalSpent: totalSpent[0]?.total || 0,
+                totalSpent: totalSpent || 0,
             };
         })
     );
@@ -217,108 +194,80 @@ const getRevenueStats = catchAsync(async (req, res, next) => {
 
     // Build date filter
     const dateFilter = {};
-    if (startDate) dateFilter.$gte = new Date(startDate);
-    if (endDate) dateFilter.$lte = new Date(endDate);
+    if (startDate) dateFilter[Op.gte] = new Date(startDate);
+    if (endDate) dateFilter[Op.lte] = new Date(endDate);
 
-    const matchStage = { status: 'Succeeded' };
+    const where = { status: 'Succeeded' };
     if (Object.keys(dateFilter).length > 0) {
-        matchStage.createdAt = dateFilter;
+        where.createdAt = dateFilter;
     }
 
     // Total revenue
-    const totalRevenue = await Payment.aggregate([
-        { $match: matchStage },
-        {
-            $group: {
-                _id: null,
-                total: { $sum: '$amount' },
-                count: { $sum: 1 },
-                avgTransaction: { $avg: '$amount' },
-            },
-        },
-    ]);
+    const totalRevenueStats = await Payment.findAll({
+        where,
+        attributes: [
+            [sequelize.fn('SUM', sequelize.col('amount')), 'total'],
+            [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+            [sequelize.fn('AVG', sequelize.col('amount')), 'avgTransaction'],
+        ],
+        raw: true
+    });
 
     // Revenue by payment type
-    const revenueByType = await Payment.aggregate([
-        { $match: matchStage },
-        {
-            $group: {
-                _id: '$paymentType',
-                total: { $sum: '$amount' },
-                count: { $sum: 1 },
-            },
-        },
-    ]);
+    const revenueByType = await Payment.findAll({
+        where,
+        attributes: [
+            'paymentType',
+            [sequelize.fn('SUM', sequelize.col('amount')), 'total'],
+            [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+        ],
+        group: ['paymentType'],
+        raw: true
+    });
 
     // Revenue by package category
-    const revenueByCategory = await Booking.aggregate([
-        {
-            $lookup: {
-                from: 'payments',
-                localField: '_id',
-                foreignField: 'booking',
-                as: 'payments',
-            },
-        },
-        {
-            $unwind: '$payments',
-        },
-        {
-            $match: { 'payments.status': 'Succeeded' },
-        },
-        {
-            $lookup: {
-                from: 'packages',
-                localField: 'package',
-                foreignField: '_id',
-                as: 'packageDetails',
-            },
-        },
-        {
-            $unwind: '$packageDetails',
-        },
-        {
-            $group: {
-                _id: '$packageDetails.category',
-                revenue: { $sum: '$payments.amount' },
-                bookings: { $sum: 1 },
-            },
-        },
-        {
-            $sort: { revenue: -1 },
-        },
-    ]);
+    // This requires joining Payment -> Booking -> Package
+    const revenueByCategory = await Payment.findAll({
+        where,
+        include: [{
+            model: Booking,
+            as: 'booking',
+            attributes: [],
+            include: [{
+                model: Package,
+                as: 'package',
+                attributes: ['category']
+            }]
+        }],
+        attributes: [
+            [sequelize.col('booking.package.category'), 'category'],
+            [sequelize.fn('SUM', sequelize.col('Payment.amount')), 'revenue'],
+            [sequelize.fn('COUNT', sequelize.col('Payment.id')), 'bookings']
+        ],
+        group: ['booking.package.category'],
+        order: [[sequelize.literal('revenue'), 'DESC']],
+        raw: true
+    });
 
     // Daily revenue (last 30 days)
-    const dailyRevenue = await Payment.aggregate([
-        {
-            $match: {
-                status: 'Succeeded',
-                createdAt: {
-                    $gte: new Date(new Date().setDate(new Date().getDate() - 30)),
-                },
-            },
-        },
-        {
-            $group: {
-                _id: {
-                    year: { $year: '$createdAt' },
-                    month: { $month: '$createdAt' },
-                    day: { $dayOfMonth: '$createdAt' },
-                },
-                revenue: { $sum: '$amount' },
-                transactions: { $sum: 1 },
-            },
-        },
-        {
-            $sort: { '_id.year': 1, '_id.month': 1, '_id.day': 1 },
-        },
-    ]);
+    const dailyRevenue = await sequelize.query(`
+        SELECT 
+            YEAR(created_at) as year,
+            MONTH(created_at) as month,
+            DAY(created_at) as day,
+            SUM(amount) as revenue,
+            COUNT(*) as transactions
+        FROM payments
+        WHERE status = 'Succeeded'
+        AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+        GROUP BY YEAR(created_at), MONTH(created_at), DAY(created_at)
+        ORDER BY year ASC, month ASC, day ASC
+    `, { type: sequelize.QueryTypes.SELECT });
 
     res.status(200).json({
         success: true,
         data: {
-            totalRevenue: totalRevenue[0] || { total: 0, count: 0, avgTransaction: 0 },
+            totalRevenue: totalRevenueStats[0] || { total: 0, count: 0, avgTransaction: 0 },
             revenueByType,
             revenueByCategory,
             dailyRevenue,
@@ -334,15 +283,13 @@ const getRevenueStats = catchAsync(async (req, res, next) => {
 const updateClientStatus = catchAsync(async (req, res, next) => {
     const { isActive } = req.body;
 
-    const user = await User.findByIdAndUpdate(
-        req.params.id,
-        { isActive },
-        { new: true, runValidators: true }
-    );
+    const user = await User.findByPk(req.params.id);
 
     if (!user) {
         return next(new AppError('User not found', 404));
     }
+
+    await user.update({ isActive });
 
     res.status(200).json({
         success: true,

@@ -19,23 +19,24 @@ const getAllPortfolio = catchAsync(async (req, res, next) => {
         isPublished = 'true',
         page = 1,
         limit = 12,
-        sort = '-createdAt',
+        sort = 'createdAt',
+        order = 'DESC',
     } = req.query;
 
     // Build query
-    const query = {};
-    if (category) query.category = category;
-    if (featured !== undefined) query.featured = featured === 'true';
-    if (isPublished !== undefined) query.isPublished = isPublished === 'true';
+    const where = {};
+    if (category) where.category = category;
+    if (featured !== undefined) where.featured = featured === 'true';
+    if (isPublished !== undefined) where.isPublished = isPublished === 'true';
 
     // Execute query with pagination
-    const skip = (page - 1) * limit;
-    const portfolio = await Portfolio.find(query)
-        .sort(sort)
-        .skip(skip)
-        .limit(parseInt(limit));
-
-    const total = await Portfolio.countDocuments(query);
+    const offset = (page - 1) * limit;
+    const { count: total, rows: portfolio } = await Portfolio.findAndCountAll({
+        where,
+        order: [[sort.replace('-', ''), order]],
+        offset,
+        limit: parseInt(limit),
+    });
 
     res.status(200).json({
         success: true,
@@ -55,7 +56,7 @@ const getAllPortfolio = catchAsync(async (req, res, next) => {
  * @access  Public
  */
 const getPortfolioById = catchAsync(async (req, res, next) => {
-    const portfolio = await Portfolio.findById(req.params.id);
+    const portfolio = await Portfolio.findByPk(req.params.id);
 
     if (!portfolio) {
         return next(new AppError('Portfolio item not found', 404));
@@ -63,7 +64,7 @@ const getPortfolioById = catchAsync(async (req, res, next) => {
 
     // Increment views
     portfolio.views += 1;
-    await portfolio.save({ validateBeforeSave: false });
+    await portfolio.save({ validate: false });
 
     res.status(200).json({
         success: true,
@@ -79,35 +80,53 @@ const getPortfolioById = catchAsync(async (req, res, next) => {
  * @access  Private/Admin
  */
 const createPortfolio = catchAsync(async (req, res, next) => {
+    console.log('Creating portfolio item with data:', req.body);
+    console.log('Files received:', req.files ? req.files.length : 0);
+    
     const portfolioData = req.body;
 
     // Handle image uploads
     if (req.files && req.files.length > 0) {
-        const uploadedImages = await uploadMultipleImages(req.files, 'portfolio');
-        portfolioData.images = uploadedImages.map((img, index) => ({
-            url: img.url,
-            publicId: img.publicId,
-            order: index,
-        }));
+        try {
+            console.log('Uploading images to Cloudinary...');
+            const uploadedImages = await uploadMultipleImages(req.files, 'portfolio');
+            console.log('Images uploaded successfully:', uploadedImages.length);
+            
+            portfolioData.images = uploadedImages.map((img, index) => ({
+                url: img.url,
+                publicId: img.publicId,
+                order: index,
+            }));
 
-        // Set first image as cover if not provided
-        if (!portfolioData.coverImage && uploadedImages.length > 0) {
-            portfolioData.coverImage = {
-                url: uploadedImages[0].url,
-                publicId: uploadedImages[0].publicId,
-            };
+            // Set first image as cover if not provided
+            if (!portfolioData.coverImage && uploadedImages.length > 0) {
+                portfolioData.coverImage = {
+                    url: uploadedImages[0].url,
+                    publicId: uploadedImages[0].publicId,
+                };
+            }
+        } catch (uploadError) {
+            console.error('Image upload failed:', uploadError);
+            return next(new AppError('Failed to upload images', 500));
         }
     }
 
-    const portfolio = await Portfolio.create(portfolioData);
+    try {
+        console.log('Creating portfolio item in database...');
+        const portfolio = await Portfolio.create(portfolioData);
+        console.log('Portfolio item created successfully:', portfolio.id);
 
-    res.status(201).json({
-        success: true,
-        message: 'Portfolio item created successfully',
-        data: {
-            portfolio,
-        },
-    });
+        res.status(201).json({
+            success: true,
+            message: 'Portfolio item created successfully',
+            data: {
+                portfolio,
+            },
+        });
+    } catch (dbError) {
+        console.error('Database error:', dbError);
+        return next(new AppError('Failed to create portfolio item', 500));
+    }
 });
 
 /**
@@ -116,7 +135,7 @@ const createPortfolio = catchAsync(async (req, res, next) => {
  * @access  Private/Admin
  */
 const updatePortfolio = catchAsync(async (req, res, next) => {
-    let portfolio = await Portfolio.findById(req.params.id);
+    const portfolio = await Portfolio.findByPk(req.params.id);
 
     if (!portfolio) {
         return next(new AppError('Portfolio item not found', 404));
@@ -133,10 +152,7 @@ const updatePortfolio = catchAsync(async (req, res, next) => {
         req.body.images = [...portfolio.images, ...newImages];
     }
 
-    portfolio = await Portfolio.findByIdAndUpdate(req.params.id, req.body, {
-        new: true,
-        runValidators: true,
-    });
+    await portfolio.update(req.body);
 
     res.status(200).json({
         success: true,
@@ -153,7 +169,7 @@ const updatePortfolio = catchAsync(async (req, res, next) => {
  * @access  Private/Admin
  */
 const deletePortfolio = catchAsync(async (req, res, next) => {
-    const portfolio = await Portfolio.findById(req.params.id);
+    const portfolio = await Portfolio.findByPk(req.params.id);
 
     if (!portfolio) {
         return next(new AppError('Portfolio item not found', 404));
@@ -171,7 +187,7 @@ const deletePortfolio = catchAsync(async (req, res, next) => {
         );
     }
 
-    await portfolio.deleteOne();
+    await portfolio.destroy();
 
     res.status(200).json({
         success: true,
@@ -185,14 +201,14 @@ const deletePortfolio = catchAsync(async (req, res, next) => {
  * @access  Private/Admin
  */
 const deletePortfolioImage = catchAsync(async (req, res, next) => {
-    const portfolio = await Portfolio.findById(req.params.id);
+    const portfolio = await Portfolio.findByPk(req.params.id);
 
     if (!portfolio) {
         return next(new AppError('Portfolio item not found', 404));
     }
 
     const imageIndex = portfolio.images.findIndex(
-        (img) => img._id.toString() === req.params.imageId
+        (img) => img.id === req.params.imageId
     );
 
     if (imageIndex === -1) {

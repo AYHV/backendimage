@@ -40,6 +40,19 @@ const errorHandler = (err, req, res, next) => {
             error = handleValidationErrorDB(error);
         }
 
+        // Sequelize errors
+        if (err.name === 'SequelizeValidationError') {
+            error = handleSequelizeValidationError(error);
+        }
+
+        if (err.name === 'SequelizeUniqueConstraintError') {
+            error = handleSequelizeUniqueError(error);
+        }
+
+        if (err.name === 'SequelizeDatabaseError') {
+            error = handleSequelizeDatabaseError(error);
+        }
+
         // JWT errors
         if (err.name === 'JsonWebTokenError') {
             error = handleJWTError();
@@ -131,6 +144,32 @@ const handleJWTError = () =>
  */
 const handleJWTExpiredError = () =>
     new AppError('Your token has expired. Please log in again.', 401);
+
+/**
+ * Handle Sequelize validation error
+ */
+const handleSequelizeValidationError = (err) => {
+    const errors = err.errors.map((e) => e.message);
+    const message = `Validation error: ${errors.join(', ')}`;
+    return new AppError(message, 400);
+};
+
+/**
+ * Handle Sequelize unique constraint error
+ */
+const handleSequelizeUniqueError = (err) => {
+    const field = err.errors[0].path;
+    const message = `${field.charAt(0).toUpperCase() + field.slice(1)} already exists`;
+    return new AppError(message, 400);
+};
+
+/**
+ * Handle Sequelize database error
+ */
+const handleSequelizeDatabaseError = (err) => {
+    const message = 'Database error occurred';
+    return new AppError(message, 500);
+};
 
 /**
  * Handle Multer errors

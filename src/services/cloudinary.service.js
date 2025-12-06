@@ -1,5 +1,5 @@
 const cloudinary = require('cloudinary').v2;
-const { AppError } = require('./errorHandler');
+const { AppError } = require('../utils/errorHandler');
 
 // Configure Cloudinary
 cloudinary.config({
@@ -8,11 +8,34 @@ cloudinary.config({
     api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
+// Check if Cloudinary is properly configured
+const isCloudinaryConfigured = () => {
+    return !!(
+        process.env.CLOUDINARY_CLOUD_NAME &&
+        process.env.CLOUDINARY_API_KEY &&
+        process.env.CLOUDINARY_API_SECRET
+    );
+};
+
 /**
  * Upload image to Cloudinary
  */
 const uploadImage = async (fileBuffer, folder = 'portfolio') => {
     try {
+        // Check if Cloudinary is configured
+        if (!isCloudinaryConfigured()) {
+            console.warn('Cloudinary not configured, returning mock data');
+            // Return mock data for development
+            return {
+                url: `https://via.placeholder.com/800x600/cccccc/666666?text=${folder}`,
+                publicId: `mock_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                format: 'jpg',
+                width: 800,
+                height: 600,
+                size: fileBuffer.length,
+            };
+        }
+
         return new Promise((resolve, reject) => {
             const uploadStream = cloudinary.uploader.upload_stream(
                 {
@@ -24,6 +47,7 @@ const uploadImage = async (fileBuffer, folder = 'portfolio') => {
                 },
                 (error, result) => {
                     if (error) {
+                        console.error('Cloudinary upload error:', error);
                         reject(new AppError('Failed to upload image', 500));
                     } else {
                         resolve({
@@ -40,6 +64,7 @@ const uploadImage = async (fileBuffer, folder = 'portfolio') => {
             uploadStream.end(fileBuffer);
         });
     } catch (error) {
+        console.error('Upload image error:', error);
         throw new AppError('Image upload failed', 500);
     }
 };
@@ -126,4 +151,5 @@ module.exports = {
     deleteMultipleImages,
     generateThumbnail,
     addWatermark,
+    isCloudinaryConfigured,
 };

@@ -12,7 +12,7 @@ const register = catchAsync(async (req, res, next) => {
     const { name, email, password, phone } = req.body;
 
     // Check if user already exists
-    const existingUser = await User.findOne({ email });
+    const existingUser = await User.findOne({ where: { email } });
     if (existingUser) {
         return next(new AppError('Email already registered', 400));
     }
@@ -27,11 +27,11 @@ const register = catchAsync(async (req, res, next) => {
     });
 
     // Generate tokens
-    const { accessToken, refreshToken } = generateTokens(user._id);
+    const { accessToken, refreshToken } = generateTokens(user.id);
 
     // Save refresh token to user
     user.refreshToken = refreshToken;
-    await user.save({ validateBeforeSave: false });
+    await user.save();
 
     // Send welcome email (don't wait for it)
     sendWelcomeEmail(email, name).catch((err) =>
@@ -43,7 +43,7 @@ const register = catchAsync(async (req, res, next) => {
         message: 'User registered successfully',
         data: {
             user: {
-                id: user._id,
+                id: user.id,
                 name: user.name,
                 email: user.email,
                 role: user.role,
@@ -63,7 +63,7 @@ const login = catchAsync(async (req, res, next) => {
     const { email, password } = req.body;
 
     // Find user and include password field
-    const user = await User.findOne({ email }).select('+password +isActive');
+    const user = await User.findOne({ where: { email } });
 
     // Check if user exists and password is correct
     if (!user || !(await user.comparePassword(password))) {
@@ -78,19 +78,19 @@ const login = catchAsync(async (req, res, next) => {
     }
 
     // Generate tokens
-    const { accessToken, refreshToken } = generateTokens(user._id);
+    const { accessToken, refreshToken } = generateTokens(user.id);
 
     // Save refresh token and update last login
     user.refreshToken = refreshToken;
     user.lastLogin = new Date();
-    await user.save({ validateBeforeSave: false });
+    await user.save();
 
     res.status(200).json({
         success: true,
         message: 'Login successful',
         data: {
             user: {
-                id: user._id,
+                id: user.id,
                 name: user.name,
                 email: user.email,
                 role: user.role,
@@ -122,7 +122,7 @@ const refreshToken = catchAsync(async (req, res, next) => {
     }
 
     // Find user and check if refresh token matches
-    const user = await User.findById(decoded.id).select('+refreshToken +isActive');
+    const user = await User.findByPk(decoded.id);
 
     if (!user || user.refreshToken !== token) {
         return next(new AppError('Invalid refresh token', 401));
@@ -133,11 +133,11 @@ const refreshToken = catchAsync(async (req, res, next) => {
     }
 
     // Generate new tokens
-    const { accessToken, refreshToken: newRefreshToken } = generateTokens(user._id);
+    const { accessToken, refreshToken: newRefreshToken } = generateTokens(user.id);
 
     // Update refresh token
     user.refreshToken = newRefreshToken;
-    await user.save({ validateBeforeSave: false });
+    await user.save();
 
     res.status(200).json({
         success: true,
@@ -155,7 +155,7 @@ const refreshToken = catchAsync(async (req, res, next) => {
  * @access  Private
  */
 const getMe = catchAsync(async (req, res, next) => {
-    const user = await User.findById(req.user.id);
+    const user = await User.findByPk(req.user.id);
 
     res.status(200).json({
         success: true,
@@ -172,9 +172,9 @@ const getMe = catchAsync(async (req, res, next) => {
  */
 const logout = catchAsync(async (req, res, next) => {
     // Clear refresh token
-    const user = await User.findById(req.user.id);
+    const user = await User.findByPk(req.user.id);
     user.refreshToken = null;
-    await user.save({ validateBeforeSave: false });
+    await user.save();
 
     res.status(200).json({
         success: true,
@@ -190,11 +190,12 @@ const logout = catchAsync(async (req, res, next) => {
 const updateProfile = catchAsync(async (req, res, next) => {
     const { name, phone, address } = req.body;
 
-    const user = await User.findByIdAndUpdate(
-        req.user.id,
-        { name, phone, address },
-        { new: true, runValidators: true }
-    );
+    const user = await User.findByPk(req.user.id);
+    if (!user) {
+        return next(new AppError('User not found', 404));
+    }
+
+    await user.update({ name, phone, address });
 
     res.status(200).json({
         success: true,
@@ -214,7 +215,10 @@ const changePassword = catchAsync(async (req, res, next) => {
     const { currentPassword, newPassword } = req.body;
 
     // Get user with password
-    const user = await User.findById(req.user.id).select('+password');
+    const user = await User.findByPk(req.user.id);
+    if (!user) {
+        return next(new AppError('User not found', 404));
+    }
 
     // Check current password
     if (!(await user.comparePassword(currentPassword))) {

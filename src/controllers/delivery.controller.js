@@ -1,8 +1,10 @@
 const Delivery = require('../models/Delivery');
 const Booking = require('../models/Booking');
+const User = require('../models/User');
 const { AppError, catchAsync } = require('../utils/errorHandler');
 const { uploadMultipleImages, deleteMultipleImages } = require('../services/cloudinary.service');
 const { sendPhotoDeliveryEmail } = require('../services/email.service');
+const { Op } = require('sequelize');
 
 /**
  * @desc    Create delivery for booking
@@ -14,14 +16,16 @@ const createDelivery = catchAsync(async (req, res, next) => {
     const { albumName, description, expiresAt, password, isPublic, allowDownload, watermarkEnabled } = req.body;
 
     // Check if booking exists
-    const booking = await Booking.findById(bookingId).populate('user');
+    const booking = await Booking.findByPk(bookingId, {
+        include: [{ model: User, as: 'user' }]
+    });
 
     if (!booking) {
         return next(new AppError('Booking not found', 404));
     }
 
     // Check if delivery already exists
-    const existingDelivery = await Delivery.findOne({ booking: bookingId });
+    const existingDelivery = await Delivery.findOne({ where: { bookingId } });
     if (existingDelivery) {
         return next(new AppError('Delivery already exists for this booking', 400));
     }
@@ -45,7 +49,7 @@ const createDelivery = catchAsync(async (req, res, next) => {
 
     // Create delivery
     const delivery = await Delivery.create({
-        booking: bookingId,
+        bookingId,
         albumName,
         description,
         photos,
@@ -68,7 +72,7 @@ const createDelivery = catchAsync(async (req, res, next) => {
         clientName: booking.contactInfo.name,
         albumName,
         photoCount: photos.length,
-        accessLink: `${process.env.FRONTEND_URL}/deliveries/${delivery._id}`,
+        accessLink: `${process.env.FRONTEND_URL}/deliveries/${delivery.id}`,
         expiresAt: expiresAt ? new Date(expiresAt).toLocaleDateString() : null,
     }).catch((err) => console.error('Failed to send delivery email:', err));
 
@@ -91,13 +95,25 @@ const createDelivery = catchAsync(async (req, res, next) => {
  */
 const getMyDeliveries = catchAsync(async (req, res, next) => {
     // Find bookings for this user
-    const bookings = await Booking.find({ user: req.user.id }).select('_id');
-    const bookingIds = bookings.map((b) => b._id);
+    const bookings = await Booking.findAll({
+        where: { userId: req.user.id },
+        attributes: ['id']
+    });
+    const bookingIds = bookings.map((b) => b.id);
 
     // Find deliveries for these bookings
-    const deliveries = await Delivery.find({ booking: { $in: bookingIds } })
-        .populate('booking', 'bookingDate package')
-        .sort('-createdAt');
+    const deliveries = await Delivery.findAll({
+        where: { bookingId: { [Op.in]: bookingIds } },
+        include: [
+            {
+                model: Booking,
+                as: 'booking',
+                attributes: ['bookingDate'],
+                include: [{ model: User, as: 'user', attributes: ['name'] }]
+            }
+        ],
+        order: [['createdAt', 'DESC']]
+    });
 
     res.status(200).json({
         success: true,
@@ -114,17 +130,18 @@ const getMyDeliveries = catchAsync(async (req, res, next) => {
  * @access  Private
  */
 const getDeliveryByBookingId = catchAsync(async (req, res, next) => {
-    const delivery = await Delivery.findOne({ booking: req.params.bookingId }).populate(
-        'booking'
-    );
+    const delivery = await Delivery.findOne({
+        where: { bookingId: req.params.bookingId },
+        include: [{ model: Booking, as: 'booking' }]
+    });
 
     if (!delivery) {
         return next(new AppError('Delivery not found', 404));
     }
 
     // Check authorization
-    const booking = await Booking.findById(delivery.booking._id);
-    if (req.user.role !== 'admin' && booking.user.toString() !== req.user.id) {
+    const booking = await Booking.findByPk(delivery.bookingId);
+    if (req.user.role !== 'admin' && booking.userId !== req.user.id) {
         return next(new AppError('You are not authorized to view this delivery', 403));
     }
 
@@ -135,7 +152,7 @@ const getDeliveryByBookingId = catchAsync(async (req, res, next) => {
 
     // Increment views
     delivery.views += 1;
-    await delivery.save({ validateBeforeSave: false });
+    await delivery.save({ validate: false });
 
     res.status(200).json({
         success: true,
@@ -151,15 +168,17 @@ const getDeliveryByBookingId = catchAsync(async (req, res, next) => {
  * @access  Private
  */
 const downloadDelivery = catchAsync(async (req, res, next) => {
-    const delivery = await Delivery.findOne({ booking: req.params.bookingId });
+    const delivery = await Delivery.findOne({
+        where: { bookingId: req.params.bookingId }
+    });
 
     if (!delivery) {
         return next(new AppError('Delivery not found', 404));
     }
 
     // Check authorization
-    const booking = await Booking.findById(delivery.booking);
-    if (req.user.role !== 'admin' && booking.user.toString() !== req.user.id) {
+    const booking = await Booking.findByPk(delivery.bookingId);
+    if (req.user.role !== 'admin' && booking.userId !== req.user.id) {
         return next(new AppError('You are not authorized to download this delivery', 403));
     }
 
@@ -173,7 +192,7 @@ const downloadDelivery = catchAsync(async (req, res, next) => {
 
     // Increment downloads
     delivery.downloads += 1;
-    await delivery.save({ validateBeforeSave: false });
+    await delivery.save({ validate: false });
 
     res.status(200).json({
         success: true,
@@ -193,7 +212,7 @@ const downloadDelivery = catchAsync(async (req, res, next) => {
  * @access  Private/Admin
  */
 const deleteDelivery = catchAsync(async (req, res, next) => {
-    const delivery = await Delivery.findById(req.params.id);
+    const delivery = await Delivery.findByPk(req.params.id);
 
     if (!delivery) {
         return next(new AppError('Delivery not found', 404));
@@ -207,7 +226,7 @@ const deleteDelivery = catchAsync(async (req, res, next) => {
         );
     }
 
-    await delivery.deleteOne();
+    await delivery.destroy();
 
     res.status(200).json({
         success: true,
@@ -221,7 +240,7 @@ const deleteDelivery = catchAsync(async (req, res, next) => {
  * @access  Private/Admin
  */
 const addPhotosToDelivery = catchAsync(async (req, res, next) => {
-    const delivery = await Delivery.findById(req.params.id);
+    const delivery = await Delivery.findByPk(req.params.id);
 
     if (!delivery) {
         return next(new AppError('Delivery not found', 404));
@@ -243,7 +262,9 @@ const addPhotosToDelivery = catchAsync(async (req, res, next) => {
         order: delivery.photos.length + index,
     }));
 
-    delivery.photos.push(...newPhotos);
+    // Update photos array
+    const updatedPhotos = [...delivery.photos, ...newPhotos];
+    delivery.photos = updatedPhotos;
     await delivery.save();
 
     res.status(200).json({
