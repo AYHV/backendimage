@@ -73,8 +73,8 @@ const Delivery = sequelize.define('Delivery', {
     tableName: 'deliveries',
     timestamps: true,
     indexes: [
-        { fields: ['bookingId'] },
-        { fields: ['createdAt'] },
+        { fields: ['booking_id'] },
+        { fields: ['created_at'] },
     ],
 });
 

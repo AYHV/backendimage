@@ -1,7 +1,10 @@
 const Booking = require('../models/Booking');
 const Package = require('../models/Package');
+const User = require('../models/User');
 const { AppError, catchAsync } = require('../utils/errorHandler');
 const { sendBookingConfirmationEmail, sendBookingCancellationEmail } = require('../services/email.service');
+const { Op } = require('sequelize');
+const sequelize = require('../config/database');
 
 /**
  * @desc    Create new booking
@@ -12,41 +15,43 @@ const createBooking = catchAsync(async (req, res, next) => {
     const { packageId, bookingDate, bookingTime, location, notes, contactInfo } = req.body;
 
     // Get package details
-    const package = await Package.findById(packageId);
-    if (!package) {
+    const pkg = await Package.findByPk(packageId);
+    if (!pkg) {
         return next(new AppError('Package not found', 404));
     }
 
-    if (!package.isActive) {
+    if (!pkg.isActive) {
         return next(new AppError('This package is not available', 400));
     }
 
     // Check if date is available (check max bookings per day)
-    const bookingsOnDate = await Booking.countDocuments({
-        package: packageId,
-        bookingDate: new Date(bookingDate),
-        bookingStatus: { $nin: ['Cancelled'] },
+    const bookingsOnDate = await Booking.count({
+        where: {
+            packageId: packageId,
+            bookingDate: new Date(bookingDate),
+            bookingStatus: { [Op.notIn]: ['Cancelled'] },
+        }
     });
 
-    if (bookingsOnDate >= package.maxBookingsPerDay) {
+    if (bookingsOnDate >= pkg.maxBookingsPerDay) {
         return next(new AppError('This date is fully booked. Please choose another date.', 400));
     }
 
     // Calculate pricing
-    const depositAmount = (package.price * package.depositPercentage) / 100;
-    const remainingAmount = package.price - depositAmount;
+    const depositAmount = (pkg.price * pkg.depositPercentage) / 100;
+    const remainingAmount = pkg.price - depositAmount;
 
     // Create booking
     const booking = await Booking.create({
-        user: req.user.id,
-        package: packageId,
+        userId: req.user.id,
+        packageId: packageId,
         bookingDate,
         bookingTime,
         location,
         notes,
         contactInfo,
         pricing: {
-            packagePrice: package.price,
+            packagePrice: pkg.price,
             depositAmount,
             remainingAmount,
             totalPaid: 0,
@@ -55,14 +60,16 @@ const createBooking = catchAsync(async (req, res, next) => {
         bookingStatus: 'Pending',
     });
 
-    // Populate package details
-    await booking.populate('package');
+    // Fetch booking with package details
+    const bookingWithDetails = await Booking.findByPk(booking.id, {
+        include: [{ model: Package, as: 'package' }]
+    });
 
     res.status(201).json({
         success: true,
         message: 'Booking created successfully. Please proceed with payment.',
         data: {
-            booking,
+            booking: bookingWithDetails,
         },
     });
 });
@@ -78,24 +85,35 @@ const getAllBookings = catchAsync(async (req, res, next) => {
         paymentStatus,
         page = 1,
         limit = 20,
-        sort = '-createdAt',
+        sort = 'createdAt',
+        order = 'DESC',
     } = req.query;
 
     // Build query
-    const query = {};
-    if (bookingStatus) query.bookingStatus = bookingStatus;
-    if (paymentStatus) query.paymentStatus = paymentStatus;
+    const where = {};
+    if (bookingStatus) where.bookingStatus = bookingStatus;
+    if (paymentStatus) where.paymentStatus = paymentStatus;
 
     // Execute query with pagination
-    const skip = (page - 1) * limit;
-    const bookings = await Booking.find(query)
-        .populate('user', 'name email phone')
-        .populate('package', 'name category price')
-        .sort(sort)
-        .skip(skip)
-        .limit(parseInt(limit));
-
-    const total = await Booking.countDocuments(query);
+    const offset = (page - 1) * limit;
+    const { count: total, rows: bookings } = await Booking.findAndCountAll({
+        where,
+        include: [
+            {
+                model: User,
+                as: 'user',
+                attributes: ['name', 'email', 'phone']
+            },
+            {
+                model: Package,
+                as: 'package',
+                attributes: ['name', 'category', 'price']
+            }
+        ],
+        order: [[sort.replace('-', ''), order]],
+        offset,
+        limit: parseInt(limit),
+    });
 
     res.status(200).json({
         success: true,
@@ -115,9 +133,17 @@ const getAllBookings = catchAsync(async (req, res, next) => {
  * @access  Private
  */
 const getMyBookings = catchAsync(async (req, res, next) => {
-    const bookings = await Booking.find({ user: req.user.id })
-        .populate('package', 'name category price duration')
-        .sort('-createdAt');
+    const bookings = await Booking.findAll({
+        where: { userId: req.user.id },
+        include: [
+            {
+                model: Package,
+                as: 'package',
+                attributes: ['name', 'category', 'price', 'duration']
+            }
+        ],
+        order: [['createdAt', 'DESC']]
+    });
 
     res.status(200).json({
         success: true,
@@ -134,16 +160,23 @@ const getMyBookings = catchAsync(async (req, res, next) => {
  * @access  Private
  */
 const getBookingById = catchAsync(async (req, res, next) => {
-    const booking = await Booking.findById(req.params.id)
-        .populate('user', 'name email phone')
-        .populate('package');
+    const booking = await Booking.findByPk(req.params.id, {
+        include: [
+            {
+                model: User,
+                as: 'user',
+                attributes: ['name', 'email', 'phone']
+            },
+            { model: Package, as: 'package' }
+        ]
+    });
 
     if (!booking) {
         return next(new AppError('Booking not found', 404));
     }
 
     // Check authorization (user can only view their own bookings, admin can view all)
-    if (req.user.role !== 'admin' && booking.user._id.toString() !== req.user.id) {
+    if (req.user.role !== 'admin' && booking.userId !== req.user.id) {
         return next(new AppError('You are not authorized to view this booking', 403));
     }
 
@@ -163,7 +196,12 @@ const getBookingById = catchAsync(async (req, res, next) => {
 const updateBookingStatus = catchAsync(async (req, res, next) => {
     const { status, cancellationReason } = req.body;
 
-    const booking = await Booking.findById(req.params.id).populate('user package');
+    const booking = await Booking.findByPk(req.params.id, {
+        include: [
+            { model: User, as: 'user' },
+            { model: Package, as: 'package' }
+        ]
+    });
 
     if (!booking) {
         return next(new AppError('Booking not found', 404));
@@ -179,7 +217,7 @@ const updateBookingStatus = catchAsync(async (req, res, next) => {
         sendBookingConfirmationEmail(booking.user.email, {
             clientName: booking.contactInfo.name,
             packageName: booking.package.name,
-            date: booking.bookingDate.toLocaleDateString(),
+            date: new Date(booking.bookingDate).toLocaleDateString(),
             time: booking.bookingTime,
             location: booking.location,
             price: booking.pricing.packagePrice,
@@ -195,7 +233,7 @@ const updateBookingStatus = catchAsync(async (req, res, next) => {
         // Send cancellation email
         sendBookingCancellationEmail(booking.user.email, {
             clientName: booking.contactInfo.name,
-            date: booking.bookingDate.toLocaleDateString(),
+            date: new Date(booking.bookingDate).toLocaleDateString(),
             reason: cancellationReason,
         }).catch((err) => console.error('Failed to send cancellation email:', err));
     }
@@ -221,14 +259,16 @@ const updateBookingStatus = catchAsync(async (req, res, next) => {
  * @access  Private
  */
 const cancelBooking = catchAsync(async (req, res, next) => {
-    const booking = await Booking.findById(req.params.id).populate('user');
+    const booking = await Booking.findByPk(req.params.id, {
+        include: [{ model: User, as: 'user' }]
+    });
 
     if (!booking) {
         return next(new AppError('Booking not found', 404));
     }
 
     // Check authorization
-    if (req.user.role !== 'admin' && booking.user._id.toString() !== req.user.id) {
+    if (req.user.role !== 'admin' && booking.userId !== req.user.id) {
         return next(new AppError('You are not authorized to cancel this booking', 403));
     }
 
@@ -259,21 +299,23 @@ const cancelBooking = catchAsync(async (req, res, next) => {
  * @access  Private/Admin
  */
 const getBookingStats = catchAsync(async (req, res, next) => {
-    const stats = await Booking.aggregate([
-        {
-            $group: {
-                _id: '$bookingStatus',
-                count: { $sum: 1 },
-                totalRevenue: { $sum: '$pricing.totalPaid' },
-            },
-        },
-    ]);
+    const stats = await Booking.findAll({
+        attributes: [
+            'bookingStatus',
+            [sequelize.fn('COUNT', sequelize.col('id')), 'count'],
+            // Note: Extracting totalRevenue from JSON field 'pricing' is tricky in standard SQL/Sequelize
+            // For now, we'll just count bookings by status
+        ],
+        group: ['bookingStatus']
+    });
 
-    const totalBookings = await Booking.countDocuments();
-    const pendingPayments = await Booking.countDocuments({ paymentStatus: 'Pending' });
-    const upcomingBookings = await Booking.countDocuments({
-        bookingDate: { $gte: new Date() },
-        bookingStatus: { $in: ['Confirmed', 'Pending'] },
+    const totalBookings = await Booking.count();
+    const pendingPayments = await Booking.count({ where: { paymentStatus: 'Pending' } });
+    const upcomingBookings = await Booking.count({
+        where: {
+            bookingDate: { [Op.gte]: new Date() },
+            bookingStatus: { [Op.in]: ['Confirmed', 'Pending'] },
+        }
     });
 
     res.status(200).json({
@@ -287,6 +329,73 @@ const getBookingStats = catchAsync(async (req, res, next) => {
     });
 });
 
+/**
+ * @desc    Upload photos for a booking
+ * @route   POST /api/v1/bookings/:id/photos
+ * @access  Private (Admin only)
+ */
+const uploadBookingPhotos = catchAsync(async (req, res, next) => {
+    const { id } = req.params;
+    
+    // Find booking
+    const booking = await Booking.findByPk(id, {
+        include: [
+            {
+                model: User,
+                as: 'user',
+                attributes: ['id', 'name', 'email'],
+            },
+            {
+                model: Package,
+                as: 'package',
+                attributes: ['id', 'name'],
+            }
+        ]
+    });
+    
+    if (!booking) {
+        return next(new AppError('Booking not found', 404));
+    }
+    
+    // Check if files were uploaded
+    if (!req.files || req.files.length === 0) {
+        return next(new AppError('Please upload at least one photo', 400));
+    }
+    
+    // Process uploaded files (URLs will be set by Cloudinary middleware)
+    const uploadedFiles = req.files.map(file => ({
+        url: file.path,
+        filename: file.filename,
+        originalName: file.originalname,
+        size: file.size,
+    }));
+    
+    // Update booking with photo information
+    const photoUrls = uploadedFiles.map(file => file.url);
+    
+    await booking.update({
+        photosUploaded: true,
+        photoUrls: photoUrls,
+        photosUploadedAt: new Date(),
+    });
+    
+    // TODO: Send notification email to client about photo availability
+    
+    res.status(200).json({
+        success: true,
+        message: `Successfully uploaded ${uploadedFiles.length} photos for booking`,
+        data: {
+            booking,
+            uploadedFiles: uploadedFiles.map(file => ({
+                url: file.url,
+                filename: file.filename,
+                originalName: file.originalName,
+                size: file.size,
+            })),
+        },
+    });
+});
+
 module.exports = {
     createBooking,
     getAllBookings,
@@ -295,4 +404,5 @@ module.exports = {
     updateBookingStatus,
     cancelBooking,
     getBookingStats,
+    uploadBookingPhotos,
 };

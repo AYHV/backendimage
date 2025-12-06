@@ -10,12 +10,15 @@ const getAllPackages = catchAsync(async (req, res, next) => {
     const { category, isActive = 'true', popular } = req.query;
 
     // Build query
-    const query = {};
-    if (category) query.category = category;
-    if (isActive !== undefined) query.isActive = isActive === 'true';
-    if (popular !== undefined) query.popular = popular === 'true';
+    const where = {};
+    if (category) where.category = category;
+    if (isActive !== undefined) where.isActive = isActive === 'true';
+    if (popular !== undefined) where.popular = popular === 'true';
 
-    const packages = await Package.find(query).sort('price');
+    const packages = await Package.findAll({
+        where,
+        order: [['price', 'ASC']]
+    });
 
     res.status(200).json({
         success: true,
@@ -32,16 +35,16 @@ const getAllPackages = catchAsync(async (req, res, next) => {
  * @access  Public
  */
 const getPackageById = catchAsync(async (req, res, next) => {
-    const package = await Package.findById(req.params.id);
+    const pkg = await Package.findByPk(req.params.id);
 
-    if (!package) {
+    if (!pkg) {
         return next(new AppError('Package not found', 404));
     }
 
     res.status(200).json({
         success: true,
         data: {
-            package,
+            package: pkg,
         },
     });
 });
@@ -52,13 +55,13 @@ const getPackageById = catchAsync(async (req, res, next) => {
  * @access  Private/Admin
  */
 const createPackage = catchAsync(async (req, res, next) => {
-    const package = await Package.create(req.body);
+    const pkg = await Package.create(req.body);
 
     res.status(201).json({
         success: true,
         message: 'Package created successfully',
         data: {
-            package,
+            package: pkg,
         },
     });
 });
@@ -69,22 +72,19 @@ const createPackage = catchAsync(async (req, res, next) => {
  * @access  Private/Admin
  */
 const updatePackage = catchAsync(async (req, res, next) => {
-    let package = await Package.findById(req.params.id);
+    const pkg = await Package.findByPk(req.params.id);
 
-    if (!package) {
+    if (!pkg) {
         return next(new AppError('Package not found', 404));
     }
 
-    package = await Package.findByIdAndUpdate(req.params.id, req.body, {
-        new: true,
-        runValidators: true,
-    });
+    await pkg.update(req.body);
 
     res.status(200).json({
         success: true,
         message: 'Package updated successfully',
         data: {
-            package,
+            package: pkg,
         },
     });
 });
@@ -95,13 +95,13 @@ const updatePackage = catchAsync(async (req, res, next) => {
  * @access  Private/Admin
  */
 const deletePackage = catchAsync(async (req, res, next) => {
-    const package = await Package.findById(req.params.id);
+    const pkg = await Package.findByPk(req.params.id);
 
-    if (!package) {
+    if (!pkg) {
         return next(new AppError('Package not found', 404));
     }
 
-    await package.deleteOne();
+    await pkg.destroy();
 
     res.status(200).json({
         success: true,

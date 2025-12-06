@@ -76,9 +76,9 @@ const Portfolio = sequelize.define('Portfolio', {
     tableName: 'portfolios',
     timestamps: true,
     indexes: [
-        { fields: ['category', 'isPublished'] },
+        { fields: ['category', 'is_published'] },
         { fields: ['featured'] },
-        { fields: ['createdAt'] },
+        { fields: ['created_at'] },
     ],
 });
 

@@ -7,6 +7,7 @@ const {
     updateBookingStatus,
     cancelBooking,
     getBookingStats,
+    uploadBookingPhotos,
 } = require('../controllers/booking.controller');
 const { protect, restrictTo } = require('../middleware/auth');
 const {
@@ -38,6 +39,15 @@ router
         restrictTo('admin'),
         validate(updateBookingStatusSchema),
         updateBookingStatus
+    );
+
+// Photo upload route
+router
+    .route('/:id/photos')
+    .post(
+        restrictTo('admin'),
+        require('../middleware/upload').uploadMultiple('photos'),
+        require('../controllers/booking.controller').uploadBookingPhotos
     );
 
 module.exports = router;

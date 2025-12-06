@@ -1,5 +1,7 @@
 const Booking = require('../models/Booking');
 const Payment = require('../models/Payment');
+const User = require('../models/User');
+const Package = require('../models/Package');
 const { AppError, catchAsync } = require('../utils/errorHandler');
 const stripeService = require('../services/stripe.service');
 const { sendPaymentReceiptEmail } = require('../services/email.service');
@@ -13,14 +15,19 @@ const createDepositPayment = catchAsync(async (req, res, next) => {
     const { bookingId } = req.body;
 
     // Get booking
-    const booking = await Booking.findById(bookingId).populate('user package');
+    const booking = await Booking.findByPk(bookingId, {
+        include: [
+            { model: User, as: 'user' },
+            { model: Package, as: 'package' }
+        ]
+    });
 
     if (!booking) {
         return next(new AppError('Booking not found', 404));
     }
 
     // Check authorization
-    if (booking.user._id.toString() !== req.user.id) {
+    if (booking.userId !== req.user.id) {
         return next(new AppError('You are not authorized to make payment for this booking', 403));
     }
 
@@ -34,7 +41,7 @@ const createDepositPayment = catchAsync(async (req, res, next) => {
         booking.pricing.depositAmount,
         'usd',
         {
-            bookingId: booking._id.toString(),
+            bookingId: booking.id,
             userId: req.user.id,
             type: 'Deposit',
         }
@@ -42,8 +49,8 @@ const createDepositPayment = catchAsync(async (req, res, next) => {
 
     // Create payment record
     const payment = await Payment.create({
-        booking: booking._id,
-        user: req.user.id,
+        bookingId: booking.id,
+        userId: req.user.id,
         amount: booking.pricing.depositAmount,
         currency: 'USD',
         paymentType: 'Deposit',
@@ -76,14 +83,19 @@ const createRemainingPayment = catchAsync(async (req, res, next) => {
     const { bookingId } = req.body;
 
     // Get booking
-    const booking = await Booking.findById(bookingId).populate('user package');
+    const booking = await Booking.findByPk(bookingId, {
+        include: [
+            { model: User, as: 'user' },
+            { model: Package, as: 'package' }
+        ]
+    });
 
     if (!booking) {
         return next(new AppError('Booking not found', 404));
     }
 
     // Check authorization
-    if (booking.user._id.toString() !== req.user.id) {
+    if (booking.userId !== req.user.id) {
         return next(new AppError('You are not authorized to make payment for this booking', 403));
     }
 
@@ -100,7 +112,7 @@ const createRemainingPayment = catchAsync(async (req, res, next) => {
         remainingAmount,
         'usd',
         {
-            bookingId: booking._id.toString(),
+            bookingId: booking.id,
             userId: req.user.id,
             type: 'Remaining',
         }
@@ -108,8 +120,8 @@ const createRemainingPayment = catchAsync(async (req, res, next) => {
 
     // Create payment record
     const payment = await Payment.create({
-        booking: booking._id,
-        user: req.user.id,
+        bookingId: booking.id,
+        userId: req.user.id,
         amount: remainingAmount,
         currency: 'USD',
         paymentType: 'Remaining',
@@ -139,12 +151,24 @@ const createRemainingPayment = catchAsync(async (req, res, next) => {
  * @access  Private
  */
 const getPaymentHistory = catchAsync(async (req, res, next) => {
-    const query = req.user.role === 'admin' ? {} : { user: req.user.id };
+    const where = req.user.role === 'admin' ? {} : { userId: req.user.id };
 
-    const payments = await Payment.find(query)
-        .populate('booking', 'bookingDate bookingTime')
-        .populate('user', 'name email')
-        .sort('-createdAt');
+    const payments = await Payment.findAll({
+        where,
+        include: [
+            {
+                model: Booking,
+                as: 'booking',
+                attributes: ['bookingDate', 'bookingTime']
+            },
+            {
+                model: User,
+                as: 'user',
+                attributes: ['name', 'email']
+            }
+        ],
+        order: [['createdAt', 'DESC']]
+    });
 
     res.status(200).json({
         success: true,
@@ -196,8 +220,12 @@ const handleStripeWebhook = catchAsync(async (req, res, next) => {
  */
 const handlePaymentSuccess = async (paymentIntent) => {
     const payment = await Payment.findOne({
-        stripePaymentIntentId: paymentIntent.id,
-    }).populate('booking user');
+        where: { stripePaymentIntentId: paymentIntent.id },
+        include: [
+            { model: Booking, as: 'booking' },
+            { model: User, as: 'user' }
+        ]
+    });
 
     if (!payment) {
         console.error('Payment not found for intent:', paymentIntent.id);
@@ -211,7 +239,11 @@ const handlePaymentSuccess = async (paymentIntent) => {
 
     // Update booking
     const booking = payment.booking;
-    booking.pricing.totalPaid += payment.amount;
+
+    // Need to clone pricing object to update it because it's JSON
+    const newPricing = { ...booking.pricing };
+    newPricing.totalPaid += payment.amount;
+    booking.pricing = newPricing;
 
     if (payment.paymentType === 'Deposit') {
         booking.paymentStatus = 'DepositPaid';
@@ -238,7 +270,7 @@ const handlePaymentSuccess = async (paymentIntent) => {
  */
 const handlePaymentFailure = async (paymentIntent) => {
     const payment = await Payment.findOne({
-        stripePaymentIntentId: paymentIntent.id,
+        where: { stripePaymentIntentId: paymentIntent.id }
     });
 
     if (!payment) {
@@ -256,8 +288,9 @@ const handlePaymentFailure = async (paymentIntent) => {
  */
 const handleRefund = async (charge) => {
     const payment = await Payment.findOne({
-        stripeChargeId: charge.id,
-    }).populate('booking');
+        where: { stripeChargeId: charge.id },
+        include: [{ model: Booking, as: 'booking' }]
+    });
 
     if (!payment) {
         console.error('Payment not found for charge:', charge.id);
@@ -271,7 +304,11 @@ const handleRefund = async (charge) => {
 
     // Update booking
     const booking = payment.booking;
-    booking.pricing.totalPaid -= payment.refundedAmount;
+
+    const newPricing = { ...booking.pricing };
+    newPricing.totalPaid -= payment.refundedAmount;
+    booking.pricing = newPricing;
+
     booking.paymentStatus = 'Refunded';
     await booking.save();
 };
@@ -284,7 +321,9 @@ const handleRefund = async (charge) => {
 const createRefund = catchAsync(async (req, res, next) => {
     const { amount } = req.body;
 
-    const payment = await Payment.findById(req.params.id).populate('booking');
+    const payment = await Payment.findByPk(req.params.id, {
+        include: [{ model: Booking, as: 'booking' }]
+    });
 
     if (!payment) {
         return next(new AppError('Payment not found', 404));
@@ -308,7 +347,11 @@ const createRefund = catchAsync(async (req, res, next) => {
 
     // Update booking
     const booking = payment.booking;
-    booking.pricing.totalPaid -= payment.refundedAmount;
+
+    const newPricing = { ...booking.pricing };
+    newPricing.totalPaid -= payment.refundedAmount;
+    booking.pricing = newPricing;
+
     if (booking.pricing.totalPaid === 0) {
         booking.paymentStatus = 'Refunded';
     }

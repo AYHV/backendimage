@@ -89,10 +89,10 @@ const Payment = sequelize.define('Payment', {
     tableName: 'payments',
     timestamps: true,
     indexes: [
-        { fields: ['bookingId'] },
-        { fields: ['userId'] },
+        { fields: ['booking_id'] },
+        { fields: ['user_id'] },
         { fields: ['status'] },
-        { fields: ['stripePaymentIntentId'] },
+        { fields: ['stripe_payment_intent_id'] },
     ],
 });
 

@@ -87,14 +87,27 @@ const Booking = sequelize.define('Booking', {
         type: DataTypes.DATE,
         allowNull: true,
     },
+    photosUploaded: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: false,
+    },
+    photoUrls: {
+        type: DataTypes.JSON,
+        allowNull: true,
+        comment: 'Array of uploaded photo URLs',
+    },
+    photosUploadedAt: {
+        type: DataTypes.DATE,
+        allowNull: true,
+    },
 }, {
     tableName: 'bookings',
     timestamps: true,
     indexes: [
-        { fields: ['userId'] },
-        { fields: ['bookingDate'] },
-        { fields: ['bookingStatus'] },
-        { fields: ['paymentStatus'] },
+        { fields: ['user_id'] },
+        { fields: ['booking_date'] },
+        { fields: ['booking_status'] },
+        { fields: ['payment_status'] },
     ],
 });
 
