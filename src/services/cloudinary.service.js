@@ -88,12 +88,22 @@ const uploadMultipleImages = async (files, folder = 'portfolio') => {
  */
 const deleteImage = async (publicId) => {
     try {
+        // Check if Cloudinary is configured
+        if (!isCloudinaryConfigured()) {
+            console.warn('Cloudinary not configured, skipping deletion for:', publicId);
+            return { result: 'ok', message: 'Cloudinary not configured' };
+        }
+
+        console.log('Deleting image from Cloudinary:', publicId);
         const result = await cloudinary.uploader.destroy(publicId);
-        if (result.result !== 'ok') {
-            throw new AppError('Failed to delete image', 500);
+        console.log('Deletion result:', result);
+        
+        if (result.result !== 'ok' && result.result !== 'not found') {
+            throw new AppError('Failed to delete image from Cloudinary', 500);
         }
         return result;
     } catch (error) {
+        console.error('Image deletion error:', error);
         throw new AppError('Image deletion failed', 500);
     }
 };
@@ -103,9 +113,23 @@ const deleteImage = async (publicId) => {
  */
 const deleteMultipleImages = async (publicIds) => {
     try {
-        const deletePromises = publicIds.map((publicId) => deleteImage(publicId));
-        return await Promise.all(deletePromises);
+        if (!publicIds || publicIds.length === 0) {
+            console.log('No images to delete');
+            return [];
+        }
+
+        console.log(`Deleting ${publicIds.length} images from Cloudinary:`, publicIds);
+        const deletePromises = publicIds.map((publicId) => 
+            deleteImage(publicId).catch(err => {
+                console.error(`Failed to delete ${publicId}:`, err);
+                return { result: 'error', publicId, error: err.message };
+            })
+        );
+        const results = await Promise.all(deletePromises);
+        console.log('All deletion results:', results);
+        return results;
     } catch (error) {
+        console.error('Failed to delete images:', error);
         throw new AppError('Failed to delete images', 500);
     }
 };
