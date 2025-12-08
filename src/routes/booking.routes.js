@@ -23,11 +23,28 @@ router.use(protect);
 router
     .route('/')
     .get(restrictTo('admin'), getAllBookings)
-    .post(validate(createBookingSchema), createBooking);
+    .post(
+        require('../middleware/upload').uploadSingle('receipt'),
+        (req, res, next) => {
+            // Parse JSON fields from multipart/form-data
+            if (req.body.contactInfo && typeof req.body.contactInfo === 'string') {
+                try {
+                    req.body.contactInfo = JSON.parse(req.body.contactInfo);
+                } catch (e) { }
+            }
+            if (req.body.selectedPoses && typeof req.body.selectedPoses === 'string') {
+                try {
+                    req.body.selectedPoses = JSON.parse(req.body.selectedPoses);
+                } catch (e) { }
+            }
+            next();
+        },
+        validate(createBookingSchema),
+        createBooking
+    );
 
 router.get('/my', getMyBookings);
 router.get('/stats/overview', restrictTo('admin'), getBookingStats);
-
 router
     .route('/:id')
     .get(getBookingById)
