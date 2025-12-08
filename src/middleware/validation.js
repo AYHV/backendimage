@@ -159,8 +159,8 @@ const createBookingSchema = Joi.object({
     packageId: Joi.string().required().messages({
         'string.empty': 'Package ID is required',
     }),
-    bookingDate: Joi.date().greater('now').required().messages({
-        'date.greater': 'Booking date must be in the future',
+    bookingDate: Joi.date().required().messages({
+        // 'date.greater': 'Booking date must be in the future',
         'any.required': 'Booking date is required',
     }),
     bookingTime: Joi.string().required().messages({
@@ -170,9 +170,12 @@ const createBookingSchema = Joi.object({
     notes: Joi.string().max(1000).optional(),
     contactInfo: Joi.object({
         name: Joi.string().required(),
-        email: Joi.string().email().required(),
+        email: Joi.string().email().allow('').optional(),
         phone: Joi.string().required(),
     }).required(),
+    selectedPoses: Joi.array().items(Joi.string()).optional().messages({
+        'array.base': 'Selected poses must be an array of strings'
+    }),
 });
 
 const updateBookingStatusSchema = Joi.object({

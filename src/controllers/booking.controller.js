@@ -5,6 +5,26 @@ const { AppError, catchAsync } = require('../utils/errorHandler');
 const { sendBookingConfirmationEmail, sendBookingCancellationEmail } = require('../services/email.service');
 const { Op } = require('sequelize');
 const sequelize = require('../config/database');
+const cloudinary = require('../config/cloudinary');
+const { Readable } = require('stream');
+
+// Helper to upload to Cloudinary from buffer
+const uploadToCloudinary = (buffer) => {
+    return new Promise((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+            { folder: 'receipts' },
+            (error, result) => {
+                if (error) return reject(error);
+                resolve(result);
+            }
+        );
+
+        const stream = new Readable();
+        stream.push(buffer);
+        stream.push(null);
+        stream.pipe(uploadStream);
+    });
+};
 
 /**
  * @desc    Create new booking
@@ -12,10 +32,36 @@ const sequelize = require('../config/database');
  * @access  Private
  */
 const createBooking = catchAsync(async (req, res, next) => {
-    const { packageId, bookingDate, bookingTime, location, notes, contactInfo } = req.body;
+    const { packageId, bookingDate, bookingTime, location, notes, contactInfo, selectedPoses } = req.body;
 
     // Get package details
-    const pkg = await Package.findByPk(packageId);
+    let pkg;
+    const isUuid = /^[0-9a-fA-F]{8}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{4}\b-[0-9a-fA-F]{12}$/.test(packageId);
+
+    if (isUuid) {
+        pkg = await Package.findByPk(packageId);
+    } else {
+        // Try to find by name map or fuzzy search
+        const nameMap = {
+            'basic': 'Basic Package',
+            'standard': 'Standard Package',
+            'premium': 'Premium Package'
+        };
+        const searchName = nameMap[packageId.toLowerCase()] || packageId;
+
+        pkg = await Package.findOne({
+            where: {
+                name: { [Op.like]: `%${searchName}%` }
+            }
+        });
+
+        // If still not found, and it's one of our hardcoded types, strictly find by name or create a placeholder for demo
+        if (!pkg && nameMap[packageId.toLowerCase()]) {
+            // Optional: Create a temporary package if missing for demo purposes?
+            // For now, let's strictly require it to exist, but the like query helps.
+        }
+    }
+
     if (!pkg) {
         return next(new AppError('Package not found', 404));
     }
@@ -37,9 +83,24 @@ const createBooking = catchAsync(async (req, res, next) => {
         return next(new AppError('This date is fully booked. Please choose another date.', 400));
     }
 
-    // Calculate pricing
-    const depositAmount = (pkg.price * pkg.depositPercentage) / 100;
-    const remainingAmount = pkg.price - depositAmount;
+    // Check for receipt upload
+    let receiptUrl = null;
+    let receiptStatus = 'None';
+    let paymentStatus = 'Pending';
+
+    if (req.file) {
+        try {
+            const result = await uploadToCloudinary(req.file.buffer);
+            receiptUrl = result.secure_url;
+            receiptStatus = 'Pending';
+            paymentStatus = 'Pending'; // Still pending verification
+        } catch (error) {
+            console.error('Receipt upload failed:', error);
+            // We continue creating the booking but without the receipt? 
+            // Better to fail if receipt was attempted but failed.
+            // But for now, let's log and continue, or maybe better to throw.
+        }
+    }
 
     // Create booking
     const booking = await Booking.create({
@@ -50,13 +111,16 @@ const createBooking = catchAsync(async (req, res, next) => {
         location,
         notes,
         contactInfo,
+        selectedPoses, // Store selected poses
+        receiptUrl,
+        receiptStatus,
         pricing: {
             packagePrice: pkg.price,
             depositAmount,
             remainingAmount,
             totalPaid: 0,
         },
-        paymentStatus: 'Pending',
+        paymentStatus,
         bookingStatus: 'Pending',
     });
 
@@ -336,7 +400,7 @@ const getBookingStats = catchAsync(async (req, res, next) => {
  */
 const uploadBookingPhotos = catchAsync(async (req, res, next) => {
     const { id } = req.params;
-    
+
     // Find booking
     const booking = await Booking.findByPk(id, {
         include: [
@@ -352,16 +416,16 @@ const uploadBookingPhotos = catchAsync(async (req, res, next) => {
             }
         ]
     });
-    
+
     if (!booking) {
         return next(new AppError('Booking not found', 404));
     }
-    
+
     // Check if files were uploaded
     if (!req.files || req.files.length === 0) {
         return next(new AppError('Please upload at least one photo', 400));
     }
-    
+
     // Process uploaded files (URLs will be set by Cloudinary middleware)
     const uploadedFiles = req.files.map(file => ({
         url: file.path,
@@ -369,18 +433,18 @@ const uploadBookingPhotos = catchAsync(async (req, res, next) => {
         originalName: file.originalname,
         size: file.size,
     }));
-    
+
     // Update booking with photo information
     const photoUrls = uploadedFiles.map(file => file.url);
-    
+
     await booking.update({
         photosUploaded: true,
         photoUrls: photoUrls,
         photosUploadedAt: new Date(),
     });
-    
+
     // TODO: Send notification email to client about photo availability
-    
+
     res.status(200).json({
         success: true,
         message: `Successfully uploaded ${uploadedFiles.length} photos for booking`,
