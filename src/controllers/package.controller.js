@@ -1,13 +1,14 @@
-const Package = require('../models/Package');
-const { AppError, catchAsync } = require('../utils/errorHandler');
+const Package = require("../models/Package");
+const { AppError, catchAsync } = require("../utils/errorHandler");
 
 /**
  * @desc    Get all packages
  * @route   GET /api/v1/packages
  * @access  Public
  */
+// controllers/package.controller.js
 const getAllPackages = catchAsync(async (req, res, next) => {
-    const { category, isActive = 'true', popular } = req.query;
+    const { category, isActive = 'true', popular, limit } = req.query; // ✅ Add limit
 
     // Build query
     const where = {};
@@ -15,10 +16,18 @@ const getAllPackages = catchAsync(async (req, res, next) => {
     if (isActive !== undefined) where.isActive = isActive === 'true';
     if (popular !== undefined) where.popular = popular === 'true';
 
-    const packages = await Package.findAll({
+    // ✅ Build query options
+    const queryOptions = {
         where,
         order: [['price', 'ASC']]
-    });
+    };
+
+    // ✅ Add limit if provided
+    if (limit) {
+        queryOptions.limit = parseInt(limit, 10);
+    }
+
+    const packages = await Package.findAll(queryOptions);
 
     res.status(200).json({
         success: true,
@@ -28,25 +37,24 @@ const getAllPackages = catchAsync(async (req, res, next) => {
         },
     });
 });
-
 /**
  * @desc    Get single package
  * @route   GET /api/v1/packages/:id
  * @access  Public
  */
 const getPackageById = catchAsync(async (req, res, next) => {
-    const pkg = await Package.findByPk(req.params.id);
+  const pkg = await Package.findByPk(req.params.id);
 
-    if (!pkg) {
-        return next(new AppError('Package not found', 404));
-    }
+  if (!pkg) {
+    return next(new AppError("Package not found", 404));
+  }
 
-    res.status(200).json({
-        success: true,
-        data: {
-            package: pkg,
-        },
-    });
+  res.status(200).json({
+    success: true,
+    data: {
+      package: pkg,
+    },
+  });
 });
 
 /**
@@ -55,15 +63,15 @@ const getPackageById = catchAsync(async (req, res, next) => {
  * @access  Private/Admin
  */
 const createPackage = catchAsync(async (req, res, next) => {
-    const pkg = await Package.create(req.body);
+  const pkg = await Package.create(req.body);
 
-    res.status(201).json({
-        success: true,
-        message: 'Package created successfully',
-        data: {
-            package: pkg,
-        },
-    });
+  res.status(201).json({
+    success: true,
+    message: "Package created successfully",
+    data: {
+      package: pkg,
+    },
+  });
 });
 
 /**
@@ -72,21 +80,21 @@ const createPackage = catchAsync(async (req, res, next) => {
  * @access  Private/Admin
  */
 const updatePackage = catchAsync(async (req, res, next) => {
-    const pkg = await Package.findByPk(req.params.id);
+  const pkg = await Package.findByPk(req.params.id);
 
-    if (!pkg) {
-        return next(new AppError('Package not found', 404));
-    }
+  if (!pkg) {
+    return next(new AppError("Package not found", 404));
+  }
 
-    await pkg.update(req.body);
+  await pkg.update(req.body);
 
-    res.status(200).json({
-        success: true,
-        message: 'Package updated successfully',
-        data: {
-            package: pkg,
-        },
-    });
+  res.status(200).json({
+    success: true,
+    message: "Package updated successfully",
+    data: {
+      package: pkg,
+    },
+  });
 });
 
 /**
@@ -95,24 +103,24 @@ const updatePackage = catchAsync(async (req, res, next) => {
  * @access  Private/Admin
  */
 const deletePackage = catchAsync(async (req, res, next) => {
-    const pkg = await Package.findByPk(req.params.id);
+  const pkg = await Package.findByPk(req.params.id);
 
-    if (!pkg) {
-        return next(new AppError('Package not found', 404));
-    }
+  if (!pkg) {
+    return next(new AppError("Package not found", 404));
+  }
 
-    await pkg.destroy();
+  await pkg.destroy();
 
-    res.status(200).json({
-        success: true,
-        message: 'Package deleted successfully',
-    });
+  res.status(200).json({
+    success: true,
+    message: "Package deleted successfully",
+  });
 });
 
 module.exports = {
-    getAllPackages,
-    getPackageById,
-    createPackage,
-    updatePackage,
-    deletePackage,
+  getAllPackages,
+  getPackageById,
+  createPackage,
+  updatePackage,
+  deletePackage,
 };

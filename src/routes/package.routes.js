@@ -20,7 +20,7 @@ router
     .get(getAllPackages)
     .post(
         protect,
-        restrictTo('admin'),
+        // restrictTo('admin'),
         validate(createPackageSchema),
         createPackage
     );

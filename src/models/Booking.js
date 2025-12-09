@@ -110,6 +110,20 @@ const Booking = sequelize.define('Booking', {
         { fields: ['payment_status'] },
     ],
 });
+// ⭐ ເພີ່ມສ່ວນນີ້ - Associations
+Booking.associate = function(models) {
+    // Booking belongs to User
+    Booking.belongsTo(models.User, {
+        foreignKey: 'userId',
+        as: 'user'
+    });
+
+    // Booking belongs to Package
+    Booking.belongsTo(models.Package, {
+        foreignKey: 'packageId',
+        as: 'package'
+    });
+};
 
 // Instance methods
 Booking.prototype.isPast = function () {
