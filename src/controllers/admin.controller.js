@@ -100,11 +100,12 @@ const getDashboardStats = catchAsync(async (req, res, next) => {
             [sequelize.fn('COUNT', sequelize.col('Booking.id')), 'bookingCount']
         ],
         include: [
-            { model: Package, as: 'package', attributes: ['name', 'category', 'price'] }
+            { model: Package, as: 'package', attributes: ['id', 'name', 'category', 'price'] }
         ],
-        group: ['packageId', 'package.id', 'package.name', 'package.category', 'package.price'],
+        group: ['Booking.package_id', 'package.id'],
         order: [[sequelize.literal('bookingCount'), 'DESC']],
-        limit: 5
+        limit: 5,
+        raw: false
     });
 
     res.status(200).json({

@@ -71,14 +71,6 @@ const Booking = sequelize.define('Booking', {
         type: DataTypes.STRING,
         allowNull: true,
     },
-    receiptUrl: {
-        type: DataTypes.STRING,
-        allowNull: true,
-    },
-    receiptStatus: {
-        type: DataTypes.ENUM('None', 'Pending', 'Approved', 'Rejected'),
-        defaultValue: 'None',
-    },
     cancellationReason: {
         type: DataTypes.TEXT,
         allowNull: true,
@@ -107,11 +99,6 @@ const Booking = sequelize.define('Booking', {
     photosUploadedAt: {
         type: DataTypes.DATE,
         allowNull: true,
-    },
-    selectedPoses: {
-        type: DataTypes.JSON,
-        allowNull: true,
-        comment: 'Array of selected reference pose URLs'
     },
 }, {
     tableName: 'bookings',
